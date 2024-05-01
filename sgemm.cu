@@ -13,8 +13,8 @@ int main(int argc, char **argv) {
 
     // cuda kernel num
     int kernel_num = atoi(argv[1]);
-    if (kernel_num < 0 || kernel_num > 11) {
-        printf("Please enter a valid kernel number (0-11).\n");
+    if (kernel_num < 0) {
+        printf("Please enter a valid kernel number (>0).\n");
         exit(EXIT_FAILURE);
     } else {
         printf("Select kernel %d.\n", kernel_num);
@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
     cudaEventCreate(&end);
 
     // matrix size
-    int size_len = 24;
+    int size_len = 32;
     int SIZE[size_len];
     for (int i = 0; i < size_len; i++)
         SIZE[i] = 256 * (i + 1);

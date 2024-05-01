@@ -31,6 +31,8 @@ __global__ void mysgemm_v7(int M, int N, int K, float alpha, float *A, float *B,
 
     const int ldg_a_num = BK * BM / thread_num / 4; // 每个线程搬运4个浮点数，完成搬运至As需要所有线程搬运ldg_a_num轮
     const int ldg_b_num = BK * BN / thread_num / 4; // 每个线程搬运4个浮点数，完成搬运至Bs需要所有线程搬运ldg_b_num轮
+    static_assert(BK % 4 == 0);
+    static_assert((BK * BM) % (thread_num * 4) == 0);
 
     int a_tile_row = threadIdx.x / (BK / 4); // 每行4个字节作为一个内存块，当前线程负责第a_tile_row行的第a_tile_col个内存块的搬运
     int a_tile_col = threadIdx.x % (BK / 4) * 4;

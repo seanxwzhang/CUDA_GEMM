@@ -116,6 +116,11 @@ void test_cublas(cublasHandle_t handle, int M, int N, int K, float alpha, float 
     cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, N, A, K, &beta, C, N);
 }
 
+void test_cublasSgemmEx(cublasHandle_t handle, int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
+    cudaDataType_t t = CUDA_R_32F;
+    cublasSgemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, t, N, A, t, K, &beta, C, t, N);
+}
+
 void test_mysgemm_v1(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
     dim3 blockDim(32, 32);
     dim3 gridDim(CEIL_DIV(M, 32), CEIL_DIV(N, 32));
@@ -165,6 +170,12 @@ void test_mysgemm_v7(int M, int N, int K, float alpha, float *A, float *B, float
 }
 
 
+void test_mysgemm_v8(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
+    dim3 gridDim(CEIL_DIV(M, 128), CEIL_DIV(N, 128));
+    dim3 blockDim(16, 16); // 2D CTA
+    mysgemm_v8<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+}
+
 
 void test_kernel(int kernel_num, int M, int N, int K, float alpha, float *A, float *B, float beta, float *C,
                  cublasHandle_t handle) {
@@ -192,6 +203,12 @@ void test_kernel(int kernel_num, int M, int N, int K, float alpha, float *A, flo
             break;
         case 7:
             test_mysgemm_v7(M, N, K, alpha, A, B, beta, C);
+            break;
+        case 8:
+            test_mysgemm_v8(M, N, K, alpha, A, B, beta, C);
+            break;
+        case 100:
+            test_cublasSgemmEx(handle, M, N, K, alpha, A, B, beta, C);
             break;
         default:
             break;
