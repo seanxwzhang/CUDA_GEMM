@@ -10,3 +10,4 @@
 #include "kernel/kernel_8.cuh"
 #include "kernel/kernel_9.cuh"
 #include "kernel/kernel_10.cuh"
+#include "kernel/kernel_ref.cuh"

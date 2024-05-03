@@ -119,8 +119,9 @@ void test_cublas(cublasHandle_t handle, int M, int N, int K, float alpha, float 
 }
 
 void test_cublasSgemmEx(cublasHandle_t handle, int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
-    cudaDataType_t t = CUDA_R_32F;
-    cublasSgemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, t, N, A, t, K, &beta, C, t, N);
+    cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_32F,
+               N, A, CUDA_R_32F, K, &beta, C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F,
+               CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 }
 
 void test_mysgemm_v1(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
@@ -189,29 +190,93 @@ void test_mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B, float
 void test_mysgemm_v10(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
     constexpr int BM = 128;
     constexpr int BN = 128;
-    constexpr int BK = 8;
+    constexpr int BK = 16;
     constexpr int WM = 64;
     constexpr int WN = 64;
-    constexpr int TM = 4;
+    constexpr int TM = 8;
     constexpr int TN = 4; // we want this to be 4 to avoid bank conflict naturally 
     constexpr int warps_per_block = BM / WM * BN / WN;
+    constexpr int NUM_THREADS = warps_per_block * WARP_SIZE;
 
     // we are distributing threads in row-major order
-    constexpr int WM_SUBTILE = 16; // the size of an interation/subtile in the M dimension, 4 threads * 4 floats/per thread
-    constexpr int WN_SUBTILE = 32; // the size of an interation/subtile in the N dimension, 8 threads * 4 floats/per thread
+    constexpr int WM_SUBTILE = 32; // the size of an interation/subtile in the M dimension, 4 threads * 4 floats/per thread
+    constexpr int WN_SUBTILE = WARP_SIZE * TN * TM / WM_SUBTILE; // the size of an interation/subtile in the N dimension, 8 threads * 4 floats/per thread
 
     static_assert(WARP_SIZE == WN_SUBTILE / TN * WM_SUBTILE / TM);
 
     dim3 gridDim(CEIL_DIV(M, BM), CEIL_DIV(N, BN));
     dim3 blockDim(WARP_SIZE * warps_per_block); // 1D CTA
-    mysgemm_v10<BM, BN, BK, WM, WN, TM, TN, WM_SUBTILE, WN_SUBTILE><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+    mysgemm_v10<BM, BN, BK, WM, WN, TM, TN, WM_SUBTILE, WN_SUBTILE, NUM_THREADS><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+}
+
+
+void runSgemmWarptiling(int M, int N, int K, float alpha, float *A, float *B,
+                        float beta, float *C) {
+  // Settings for A100
+  // const uint K10_NUM_THREADS = 128;
+  // const uint K10_BN = 128;
+  // const uint K10_BM = 64;
+  // const uint K10_BK = 16;
+  // const uint K10_WN = 64;
+  // const uint K10_WM = 32;
+  // const uint K10_WNITER = 1;
+  // const uint K10_TN = 4;
+  // const uint K10_TM = 4;
+  // Settings for A6000
+  const uint K10_NUM_THREADS = 128;
+  const uint K10_BN = 128;
+  const uint K10_BM = 128;
+  const uint K10_BK = 16;
+  const uint K10_WN = 64;
+  const uint K10_WM = 64;
+  const uint K10_WNITER = 4;
+  const uint K10_TN = 4;
+  const uint K10_TM = 8;
+  dim3 blockDim(K10_NUM_THREADS);
+
+  constexpr uint NUM_WARPS = K10_NUM_THREADS / 32;
+
+  // warptile in threadblocktile
+  static_assert((K10_BN % K10_WN == 0) and (K10_BM % K10_WM == 0));
+  static_assert((K10_BN / K10_WN) * (K10_BM / K10_WM) == NUM_WARPS);
+
+  // threads in warpsubtile
+  static_assert((K10_WM * K10_WN) % (WARP_SIZE * K10_TM * K10_TN * K10_WNITER) ==
+                0);
+  constexpr uint K10_WMITER =
+      (K10_WM * K10_WN) / (32 * K10_TM * K10_TN * K10_WNITER);
+  // warpsubtile in warptile
+  static_assert((K10_WM % K10_WMITER == 0) and (K10_WN % K10_WNITER == 0));
+
+  static_assert((K10_NUM_THREADS * 4) % K10_BK == 0,
+                "NUM_THREADS*4 must be multiple of K9_BK to avoid quantization "
+                "issues during GMEM->SMEM tiling (loading only parts of the "
+                "final row of Bs during each iteraion)");
+  static_assert((K10_NUM_THREADS * 4) % K10_BN == 0,
+                "NUM_THREADS*4 must be multiple of K9_BN to avoid quantization "
+                "issues during GMEM->SMEM tiling (loading only parts of the "
+                "final row of As during each iteration)");
+  static_assert(K10_BN % (16 * K10_TN) == 0,
+                "BN must be a multiple of 16*TN to avoid quantization effects");
+  static_assert(K10_BM % (16 * K10_TM) == 0,
+                "BM must be a multiple of 16*TM to avoid quantization effects");
+  static_assert((K10_BM * K10_BK) % (4 * K10_NUM_THREADS) == 0,
+                "BM*BK must be a multiple of 4*256 to vectorize loads");
+  static_assert((K10_BN * K10_BK) % (4 * K10_NUM_THREADS) == 0,
+                "BN*BK must be a multiple of 4*256 to vectorize loads");
+
+  dim3 gridDim(CEIL_DIV(N, K10_BN), CEIL_DIV(M, K10_BM));
+  sgemmWarptiling<K10_BM, K10_BN, K10_BK, K10_WM, K10_WN, K10_WNITER, K10_TM,
+                  K10_TN, K10_NUM_THREADS>
+      <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
 }
 
 void test_kernel(int kernel_num, int M, int N, int K, float alpha, float *A, float *B, float beta, float *C,
                  cublasHandle_t handle) {
     switch (kernel_num) {
         case 0:
-            test_cublas(handle, M, N, K, alpha, A, B, beta, C);
+            // test_cublas(handle, M, N, K, alpha, A, B, beta, C);
+            test_cublasSgemmEx(handle, M, N, K, alpha, A, B, beta, C);
             break;
         case 1:
             test_mysgemm_v1(M, N, K, alpha, A, B, beta, C);
@@ -242,6 +307,9 @@ void test_kernel(int kernel_num, int M, int N, int K, float alpha, float *A, flo
             break;
         case 10:
             test_mysgemm_v10(M, N, K, alpha, A, B, beta, C);
+            break;
+        case 11:
+            runSgemmWarptiling(M, N, K, alpha, A, B, beta, C);
             break;
         case 100:
             test_cublasSgemmEx(handle, M, N, K, alpha, A, B, beta, C);
