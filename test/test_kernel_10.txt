@@ -1,0 +1,7 @@
+Select kernel 10.
+max_size=8192
+m=n=k=256
+Average elasped time: (0.000000) second, performance: (inf) GFLOPS. size: (256).
+m=n=k=512
+[CUDA ERROR] at file /home/sean/repos/NVIDIA_SGEMM_PRACTICE/sgemm.cu(line 84):
+misaligned address

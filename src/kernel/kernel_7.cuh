@@ -6,7 +6,9 @@
 #include <stdlib.h>
 
 #define OFFSET(row, col, ld) ((row)*(ld)+(col))
+#ifndef FETCH_FLOAT4
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
+#endif
 
 template<const int BM,
         const int BN,

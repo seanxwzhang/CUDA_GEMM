@@ -2,6 +2,8 @@
 #include "utils.cuh"
 #include "kernel.cuh"
 
+#define WARP_SIZE 32
+
 float get_sec() {
     struct timeval time;
     gettimeofday(&time, NULL);
@@ -109,7 +111,7 @@ bool verify_matrix(float *mat1, float *mat2, int N) {
     return true;
 }
 
-#define CEIL_DIV(M, N) ((M) + (N)-1) / (N)
+#define CEIL_DIV(M, N) int(((M) + (N)-1) / (N))
 
 void test_cublas(cublasHandle_t handle, int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
     //cublas列主序计算：https://www.cnblogs.com/cuancuancuanhao/p/7763256.html
@@ -170,12 +172,40 @@ void test_mysgemm_v7(int M, int N, int K, float alpha, float *A, float *B, float
 }
 
 
+// my baseline
 void test_mysgemm_v8(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
     dim3 gridDim(CEIL_DIV(M, 128), CEIL_DIV(N, 128));
     dim3 blockDim(16, 16); // 2D CTA
     mysgemm_v8<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
 }
 
+// autotune
+void test_mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
+    dim3 gridDim(CEIL_DIV(M, 128), CEIL_DIV(N, 128));
+    dim3 blockDim(16, 16); // 2D CTA, 2 warps per block
+    mysgemm_v9<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+}
+
+void test_mysgemm_v10(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
+    constexpr int BM = 128;
+    constexpr int BN = 128;
+    constexpr int BK = 8;
+    constexpr int WM = 64;
+    constexpr int WN = 64;
+    constexpr int TM = 4;
+    constexpr int TN = 4; // we want this to be 4 to avoid bank conflict naturally 
+    constexpr int warps_per_block = BM / WM * BN / WN;
+
+    // we are distributing threads in row-major order
+    constexpr int WM_SUBTILE = 16; // the size of an interation/subtile in the M dimension, 4 threads * 4 floats/per thread
+    constexpr int WN_SUBTILE = 32; // the size of an interation/subtile in the N dimension, 8 threads * 4 floats/per thread
+
+    static_assert(WARP_SIZE == WN_SUBTILE / TN * WM_SUBTILE / TM);
+
+    dim3 gridDim(CEIL_DIV(M, BM), CEIL_DIV(N, BN));
+    dim3 blockDim(WARP_SIZE * warps_per_block); // 1D CTA
+    mysgemm_v10<BM, BN, BK, WM, WN, TM, TN, WM_SUBTILE, WN_SUBTILE><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+}
 
 void test_kernel(int kernel_num, int M, int N, int K, float alpha, float *A, float *B, float beta, float *C,
                  cublasHandle_t handle) {
@@ -206,6 +236,12 @@ void test_kernel(int kernel_num, int M, int N, int K, float alpha, float *A, flo
             break;
         case 8:
             test_mysgemm_v8(M, N, K, alpha, A, B, beta, C);
+            break;
+        case 9:
+            test_mysgemm_v9(M, N, K, alpha, A, B, beta, C);
+            break;
+        case 10:
+            test_mysgemm_v10(M, N, K, alpha, A, B, beta, C);
             break;
         case 100:
             test_cublasSgemmEx(handle, M, N, K, alpha, A, B, beta, C);

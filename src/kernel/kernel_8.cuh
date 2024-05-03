@@ -13,6 +13,8 @@
 #endif
 #define GROUP_SIZE 8
 
+namespace kernel8
+{
 template<int BM, int BN, int BK>
 __device__ __forceinline__ void gmem_to_smem(float *sA, float *sB, float smem_a[][BK][BM], float smem_b[][BK][BN], float ldreg_a[][4], float ldreg_b[][4], int a_smem_rounds, int a_stride, int a_smem_x, int a_smem_y, int b_smem_rounds, int b_stride, int b_smem_y, int b_smem_x, int phase)
 {
@@ -79,6 +81,7 @@ __device__ __forceinline__ void smem_to_frag(float frag_a[][TM], float frag_b[][
         FETCH_FLOAT4(frag_b[frag_phase][i]) = FETCH_FLOAT4(smem_b[smem_phase][bk][threadIdx.x * TN + i]);
     }
 }
+} // namespace kernel 8
 
 // This function assumes B is already transposed
 template <const int BM,
@@ -137,11 +140,11 @@ __global__ void mysgemm_v8(int M, int N, int K, float alpha, float *A, float *B,
     float *sB = &B[b_smem_y * N + bn + b_smem_x];
 
     // 1.1 fetch from global to smem, use register as buffer
-    gmem_to_smem<BM, BN, BK>(sA, sB, smem_a, smem_b, ldreg_a, ldreg_b, a_smem_rounds, a_stride, a_smem_x, a_smem_y, b_smem_rounds, b_stride, b_smem_y, b_smem_x, 0);
+    kernel8::gmem_to_smem<BM, BN, BK>(sA, sB, smem_a, smem_b, ldreg_a, ldreg_b, a_smem_rounds, a_stride, a_smem_x, a_smem_y, b_smem_rounds, b_stride, b_smem_y, b_smem_x, 0);
     __syncthreads(); // need the sync such that the following fragment can be obtained
 
     // 1.2 load 0 round of smem->frag
-    smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, 0, 0, 0); // load first batch of frag from first block of smem
+    kernel8::smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, 0, 0, 0); // load first batch of frag from first block of smem
     int smem_write_index = 1; // next index of smems to write to
     int smem_read_index; // read is current write
 
@@ -152,7 +155,7 @@ __global__ void mysgemm_v8(int M, int N, int K, float alpha, float *A, float *B,
         if (k + 1 < K / BK) {
             sA += BK;
             sB += N * BK;
-            gmem_to_reg(sA, sB, ldreg_a, ldreg_b, a_smem_rounds, a_stride, b_smem_rounds, b_stride); // only load to reg, this is non-blocking
+            kernel8::gmem_to_reg(sA, sB, ldreg_a, ldreg_b, a_smem_rounds, a_stride, b_smem_rounds, b_stride); // only load to reg, this is non-blocking
         }
         // 2.1 use the frag already loaded to compute the outer product, note that we do register prefetching here
 
@@ -160,7 +163,7 @@ __global__ void mysgemm_v8(int M, int N, int K, float alpha, float *A, float *B,
 #pragma unroll
         for (int b_k = 1; b_k < BK; ++b_k) // load one sub row at a time from smem to frag
         {
-            smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, b_k % 2, smem_read_index, b_k);
+            kernel8::smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, b_k % 2, smem_read_index, b_k);
 #pragma unroll
             for (int i = 0; i < TM; ++i)
             { // outer product for the previous prefetched frag
@@ -173,10 +176,10 @@ __global__ void mysgemm_v8(int M, int N, int K, float alpha, float *A, float *B,
         }
         // 2.2 if there's next block, start loading from reg to smem
         if (k + 1 < K / BK) {
-            reg_to_smem<BM, BN, BK>(smem_a, smem_b, ldreg_a, ldreg_b, a_smem_rounds, a_stride, a_smem_x, a_smem_y, b_smem_rounds, b_stride, b_smem_y, b_smem_x, smem_write_index);
+            kernel8::reg_to_smem<BM, BN, BK>(smem_a, smem_b, ldreg_a, ldreg_b, a_smem_rounds, a_stride, a_smem_x, a_smem_y, b_smem_rounds, b_stride, b_smem_y, b_smem_x, smem_write_index);
             __syncthreads();
             // prefetch a round of fragments from the current write, this will be blocking
-            smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, 0, smem_write_index, 0);
+            kernel8::smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, 0, smem_write_index, 0);
             smem_write_index ^= 1; // update next write
         }
 #pragma unroll

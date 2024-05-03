@@ -1,9 +1,28 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/time.h>
+#include <cstdlib>
+#include <iostream>
 #include <utils.cuh>
 
 #define cudaCheck(err) (cudaCheck(err, __FILE__, __LINE__))
+
+#define BM 256
+#define BN 256
+#define BK 16
+#define TM 4
+#define TN 16
+
+
+// using namespace std;
+
+#define INIT_MATRIX(m, size) \
+    float *m = (float *)malloc(sizeof(float) * size * size);
+
+#define PREPARE_MATRIX(m, size) \
+    INIT_MATRIX(m, size) \
+    float *d##m = nullptr; \
+    randomize_matrix(m, size * size); \
+    cudaCheck(cudaMalloc((void **) &d##m, sizeof(float) * size * size)); 
+
+
 
 int main(int argc, char **argv) {
     if (argc != 2) {
@@ -34,14 +53,10 @@ int main(int argc, char **argv) {
     cudaEventCreate(&end);
 
     // matrix size
-    int size_len = 32;
+    int size_len = 16;
     int SIZE[size_len];
     for (int i = 0; i < size_len; i++)
         SIZE[i] = 256 * (i + 1);
-    // uncomment below to profile a single size
-    // int size_len = 1;
-    // int SIZE[size_len];
-    // SIZE[0] = 4096;
 
     int m, n, k, max_size;
     max_size = SIZE[size_len - 1];
@@ -80,7 +95,7 @@ int main(int argc, char **argv) {
         // 验证计算正确性，同时在核函数计时前预先执行一次，避免冷启动误差
         if (kernel_num != 0) {
             test_kernel(0, m, n, k, alpha, dA, dB, beta, dC_ref, handle);      // cuBLAS
-            test_kernel(kernel_num, m, n, k, alpha, dA, dB, beta, dC, handle); // user define
+            run_kernel<BM, BN, BK, TM, TN>(kernel_num, m, n, k, alpha, dA, dB, beta, dC, handle); // user define
             cudaCheck(cudaGetLastError());
             cudaDeviceSynchronize();
             cudaMemcpy(C, dC, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
@@ -96,7 +111,7 @@ int main(int argc, char **argv) {
 
         cudaEventRecord(beg);
         for (int j = 0; j < repeat_times; j++) {
-            test_kernel(kernel_num, m, n, k, alpha, dA, dB, beta, dC, handle);
+            run_kernel<BM, BN, BK, TM, TN>(kernel_num, m, n, k, alpha, dA, dB, beta, dC, handle); 
         }
         cudaEventRecord(end);
         cudaEventSynchronize(beg);

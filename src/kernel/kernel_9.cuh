@@ -1,6 +1,3 @@
-// A couple improvements:
-// 1. warp aware + bank conflict aware
-
 #pragma once
 
 #include <cuda_runtime.h>
@@ -17,13 +14,16 @@
 #define GROUP_SIZE 8
 #define WARP_SIZE 32
 
+
+namespace kernel9 {
+
 template<int BM, int BN, int BK>
-__device__ __forceinline__ void gmem_to_smem(float *sA, float *sB, float smem_a[][BK][BM], float smem_b[][BK][BN], float ldreg_a[][4], float ldreg_b[][4], int a_smem_rounds, int a_stride, int a_smem_x, int a_smem_y, int b_smem_rounds, int b_stride, int b_smem_y, int b_smem_x, int phase)
+__device__ __forceinline__ void gmem_to_smem(float *A, float *B, float smem_a[][BK][BM], float smem_b[][BK][BN], float ldreg_a[][4], float ldreg_b[][4], int a_smem_rounds, int a_stride, int a_smem_x, int a_smem_y, int b_smem_rounds, int b_stride, int b_smem_y, int b_smem_x, int phase)
 {
 #pragma unroll // A: global -> reg buffer
     for (int i = 0; i < a_smem_rounds; ++i)
     {
-        FETCH_FLOAT4(ldreg_a[i]) = FETCH_FLOAT4(sA[i * a_stride]); // this will cause 4-way bank conflict
+        FETCH_FLOAT4(ldreg_a[i]) = FETCH_FLOAT4(A[i * a_stride]);
         smem_a[phase][a_smem_x][a_smem_y + i * a_stride] = ldreg_a[i][0];
         smem_a[phase][a_smem_x + 1][a_smem_y + i * a_stride] = ldreg_a[i][1];
         smem_a[phase][a_smem_x + 2][a_smem_y + i * a_stride] = ldreg_a[i][2];
@@ -32,22 +32,22 @@ __device__ __forceinline__ void gmem_to_smem(float *sA, float *sB, float smem_a[
 #pragma unroll // B: global -> reg buffer
     for (int i = 0; i < b_smem_rounds; ++i)
     {
-        FETCH_FLOAT4(ldreg_b[i]) = FETCH_FLOAT4(sB[i * b_stride]);
+        FETCH_FLOAT4(ldreg_b[i]) = FETCH_FLOAT4(B[i * b_stride]);
         FETCH_FLOAT4(smem_b[phase][b_smem_y][b_smem_x + i * b_stride]) = FETCH_FLOAT4(ldreg_b[i]);
     }
 }
 
-__device__ __forceinline__ void gmem_to_reg(float *sA, float *sB, float ldreg_a[][4], float ldreg_b[][4], int a_smem_rounds, int a_stride, int b_smem_rounds, int b_stride)
+__device__ __forceinline__ void gmem_to_reg(float *A, float *B, float ldreg_a[][4], float ldreg_b[][4], int a_smem_rounds, int a_stride, int b_smem_rounds, int b_stride)
 {
 #pragma unroll // A: global -> reg buffer
     for (int i = 0; i < a_smem_rounds; ++i)
     {
-        FETCH_FLOAT4(ldreg_a[i]) = FETCH_FLOAT4(sA[i * a_stride]);
+        FETCH_FLOAT4(ldreg_a[i]) = FETCH_FLOAT4(A[i * a_stride]);
     }
 #pragma unroll // B: global -> reg buffer
     for (int i = 0; i < b_smem_rounds; ++i)
     {
-        FETCH_FLOAT4(ldreg_b[i]) = FETCH_FLOAT4(sB[i * b_stride]);
+        FETCH_FLOAT4(ldreg_b[i]) = FETCH_FLOAT4(B[i * b_stride]);
     }
 }
 
@@ -72,17 +72,22 @@ __device__ __forceinline__ void reg_to_smem(float smem_a[][BK][BM], float smem_b
 template<int BM, int BN, int BK, int TM, int TN>
 __device__ __forceinline__ void smem_to_frag(float frag_a[][TM], float frag_b[][TN], float smem_a[][BK][BM], float smem_b[][BK][BN], int frag_phase, int smem_phase, int bk)
 {
-#pragma unroll
+    // int swizzel_id = (threadIdx.x / 4) % 2;
+#pragma unroll 
     for (int i = 0; i < TM; i += 4)
     {
+        // int swizzel_i = ((i / 4) ^ swizzel_id) * 4;
         FETCH_FLOAT4(frag_a[frag_phase][i]) = FETCH_FLOAT4(smem_a[smem_phase][bk][threadIdx.y * TM + i]);
     }
 #pragma unroll
     for (int i = 0; i < TN; i += 4)
     {
+        // int swizzel_i = ((i / 4) ^ swizzel_id) * 4;
         FETCH_FLOAT4(frag_b[frag_phase][i]) = FETCH_FLOAT4(smem_b[smem_phase][bk][threadIdx.x * TN + i]);
     }
 }
+
+} // namespace kernel 9
 
 // This function assumes B is already transposed
 template <const int BM,
@@ -103,12 +108,12 @@ __global__ void mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B,
     int a_stride = threads_per_block / a_threads_per_row_per_round * K;
     constexpr int b_threads_per_row_per_round = BN / 4;
     int b_stride = threads_per_block / b_threads_per_row_per_round * N;
-    int tid = threadIdx.y * blockDim.x + threadIdx.x;
-    int id_in_warp = tid % WARP_SIZE;
-    int a_smem_x = (tid % a_threads_per_row_per_round) * 4;
-    int a_smem_y = tid / a_threads_per_row_per_round;
-    int b_smem_x = (tid % b_threads_per_row_per_round) * 4;
-    int b_smem_y = tid / b_threads_per_row_per_round;
+    // int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    // int lane_id = tid % 32;
+    int a_smem_x = ((threadIdx.y * blockDim.x + threadIdx.x) % a_threads_per_row_per_round) * 4;
+    int a_smem_y = (threadIdx.y * blockDim.x + threadIdx.x) / a_threads_per_row_per_round;
+    int b_smem_x = ((threadIdx.y * blockDim.x + threadIdx.x) % b_threads_per_row_per_round) * 4;
+    int b_smem_y = (threadIdx.y * blockDim.x + threadIdx.x) / b_threads_per_row_per_round;
 
     static_assert((BM * BK) % threads_per_block == 0);
     static_assert((BK * BN) % threads_per_block == 0);
@@ -133,20 +138,16 @@ __global__ void mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B,
     float frag_a[2][TM];
     float frag_b[2][TN];
 
-    // calculate block start
-    int bm = by * BM;
-    int bn = bx * BN;
-
     // move A to thread start
-    float *sA = &A[bm * K + a_smem_y * K + a_smem_x];
-    float *sB = &B[b_smem_y * N + bn + b_smem_x];
+    A = &A[by * BM * K + a_smem_y * K + a_smem_x];
+    B = &B[b_smem_y * N + bx * BN + b_smem_x];
 
     // 1.1 fetch from global to smem, use register as buffer
-    gmem_to_smem<BM, BN, BK>(sA, sB, smem_a, smem_b, ldreg_a, ldreg_b, a_smem_rounds, a_stride, a_smem_x, a_smem_y, b_smem_rounds, b_stride, b_smem_y, b_smem_x, 0);
+    kernel9::gmem_to_smem<BM, BN, BK>(A, B, smem_a, smem_b, ldreg_a, ldreg_b, a_smem_rounds, a_stride, a_smem_x, a_smem_y, b_smem_rounds, b_stride, b_smem_y, b_smem_x, 0);
     __syncthreads(); // need the sync such that the following fragment can be obtained
 
     // 1.2 load 0 round of smem->frag
-    smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, 0, 0, 0); // load first batch of frag from first block of smem
+    kernel9::smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, 0, 0, 0); // load first batch of frag from first block of smem
     int smem_write_index = 1; // next index of smems to write to
     int smem_read_index; // read is current write
 
@@ -155,9 +156,9 @@ __global__ void mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B,
     {
         // 2.0 fetch from global to smem, use register as buffer
         if (k + 1 < K / BK) {
-            sA += BK;
-            sB += N * BK;
-            gmem_to_reg(sA, sB, ldreg_a, ldreg_b, a_smem_rounds, a_stride, b_smem_rounds, b_stride); // only load to reg, this is non-blocking
+            A += BK; // every iteration, A moves BK to the right
+            B += N * BK; // every iteration, B moves BK * N down
+            kernel9::gmem_to_reg(A, B, ldreg_a, ldreg_b, a_smem_rounds, a_stride, b_smem_rounds, b_stride); // only load to reg, this is non-blocking
         }
         // 2.1 use the frag already loaded to compute the outer product, note that we do register prefetching here
 
@@ -165,7 +166,7 @@ __global__ void mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B,
 #pragma unroll
         for (int b_k = 1; b_k < BK; ++b_k) // load one sub row at a time from smem to frag
         {
-            smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, b_k % 2, smem_read_index, b_k);
+            kernel9::smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, b_k % 2, smem_read_index, b_k);
 #pragma unroll
             for (int i = 0; i < TM; ++i)
             { // outer product for the previous prefetched frag
@@ -178,10 +179,10 @@ __global__ void mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B,
         }
         // 2.2 if there's next block, start loading from reg to smem
         if (k + 1 < K / BK) {
-            reg_to_smem<BM, BN, BK>(smem_a, smem_b, ldreg_a, ldreg_b, a_smem_rounds, a_stride, a_smem_x, a_smem_y, b_smem_rounds, b_stride, b_smem_y, b_smem_x, smem_write_index);
+            kernel9::reg_to_smem<BM, BN, BK>(smem_a, smem_b, ldreg_a, ldreg_b, a_smem_rounds, a_stride, a_smem_x, a_smem_y, b_smem_rounds, b_stride, b_smem_y, b_smem_x, smem_write_index);
             __syncthreads();
             // prefetch a round of fragments from the current write, this will be blocking
-            smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, 0, smem_write_index, 0);
+            kernel9::smem_to_frag<BM, BN, BK, TM, TN>(frag_a, frag_b, smem_a, smem_b, 0, smem_write_index, 0);
             smem_write_index ^= 1; // update next write
         }
 #pragma unroll
@@ -197,7 +198,7 @@ __global__ void mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B,
 
     // 3. put the accumulate value down to C
     // move C to thread tile start
-    C = &C[(bm + threadIdx.y * TM) * N + bn + threadIdx.x * TN];
+    C = &C[(by * BM + threadIdx.y * TM) * N + bx * BN + threadIdx.x * TN];
 #pragma unroll
     for (int i = 0; i < TM; ++i) {
 #pragma unroll
@@ -212,14 +213,3 @@ __global__ void mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B,
     }
 }
 
-// 1: Load a BM*BK block of A into smem,load a BK*BN block of B into smem
-//      1.1: each thread needs a BM*BK/4/threads_per_block for A, a BK*BN/4/threads_per_block for B
-//      1.2: load the 0 round of smem->frag, sync
-// 2. Loop the following by K/BK times (k in range(K/BK)):
-//      2.0: If there's next round, start the k+1 round of global->reg, no sync
-//      2.1: Loop the following by BK times:
-//          2.1.1: Prefetching next round of frag
-//          2.1.2: Use the frag from round k to compute the outer product, put into accum
-//      2.2: If there's next round, start k+1 round of reg->smem, no snc
-// 3: Compute the last round of outer product
-// 4. Put accum down to C

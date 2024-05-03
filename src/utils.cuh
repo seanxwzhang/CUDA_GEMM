@@ -6,7 +6,12 @@
 #include <sys/time.h>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
+#include "kernel/kernel_9.cuh"
+#include "kernel/kernel_7.cuh"
 
+#ifndef CEIL_DIV
+#define CEIL_DIV(M, N) int(((M) + (N)-1) / (N))
+#endif
 /*
 =====================================
 CUDA操作
@@ -40,3 +45,23 @@ kernel操作
 */
 //调用指定核函数计算矩阵乘法
 void test_kernel(int kernel_num, int m, int n, int k, float alpha, float *A, float *B, float beta, float *C, cublasHandle_t handle);
+
+
+template<int BM, int BN, int BK, int TM, int TN>
+void run_mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
+    dim3 gridDim(CEIL_DIV(M, BM), CEIL_DIV(N, BN));
+    dim3 blockDim(CEIL_DIV(BM, TM) * CEIL_DIV(BN, TN));
+    mysgemm_v7<BM, BN, BK, TM, TN><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+}
+
+
+template<int BM, int BN, int BK, int TM, int TN>
+void run_kernel(int kernel_num, int M, int N, int K, float alpha, float *A, float *B, float beta, float *C, cublasHandle_t handle) {
+    switch (kernel_num) {
+        case 9:
+            run_mysgemm_v9<BM, BN, BK, TM, TN>(M, N, K, alpha, A, B, beta, C);
+            break;
+        default:
+            break;
+    }
+}

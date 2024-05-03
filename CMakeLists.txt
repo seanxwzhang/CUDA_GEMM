@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.29)
 project(NVIDIA_SGEMM_PRACTICE)
 enable_language(CUDA CXX)
 
@@ -15,10 +15,8 @@ set(CMAKE_CXX_FLAGS "-O3 -std=c++11")
 # set(CUDA_NVCC_FLAGS -g;-G;-Xptxas;-dlcm=ca)
 # set(CUDA_NVCC_FLAGS -Xptxas;-dlcm=cg)
 find_package(CUDAToolkit)
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES 80)
-endif()
-set(CUDA_NVCC_FLAGS -arch=compute_80;-code=compute_80)
+set(CMAKE_CUDA_ARCHITECTURES 80)
+set(CUDA_NVCC_FLAGS -arch=compute_80;-code=compute_80;)
 
 # 若FIND CUDA ERROR，在~/.bashrc中添加配置环境变量和动态库路径
 # CUDA_HOME=/usr/local/cuda
@@ -29,7 +27,7 @@ set(CUDA_NVCC_FLAGS -arch=compute_80;-code=compute_80)
 include_directories(${CUDA_INCLUDE_DIRS})
 include_directories(${PROJECT_SOURCE_DIR}/src)
 # 配置待编译的源文件路径
-aux_source_directory(${PROJECT_SOURCE_DIR}/src SRC)
+file(GLOB_RECURSE SRC ${PROJECT_SOURCE_DIR}/src/*.cu)
 # 可执行文件输出路径
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR})
 # 生成可执行文件
@@ -42,7 +40,10 @@ add_executable(sgemm sgemm.cu ${SRC})
 #     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -pg")
 # endif()
 add_executable(check check.cu)
+add_executable(autotune autotune.cu ${SRC})
 
 # link cudart cublas
 target_link_libraries(sgemm ${CUDA_LIBRARIES} ${CUDA_cublas_LIBRARY})
+target_link_libraries(autotune ${CUDA_LIBRARIES} ${CUDA_cublas_LIBRARY})
 
+target_compile_options(sgemm PRIVATE "$<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CUDA>>:-g;--generate-line-info;>")
