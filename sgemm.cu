@@ -7,7 +7,7 @@
 
 int main(int argc, char **argv) {
     if (argc != 2) {
-        printf("Please select a kernel (range 0 - 11, here 0 is for NVIDIA cuBLAS).\n");
+        printf("Please select a kernel (range 0 - 100, here 0 is for NVIDIA cuBLAS).\n");
         exit(EXIT_FAILURE);
     }
 
@@ -34,10 +34,13 @@ int main(int argc, char **argv) {
     cudaEventCreate(&end);
 
     // matrix size
-    int size_len = 32;
+    int size_len = 16;
     int SIZE[size_len];
     for (int i = 0; i < size_len; i++)
         SIZE[i] = 256 * (i + 1);
+    // int size_len = 6;
+    // int SIZE[6] = {128, 256, 512, 1024, 2048, 4096};
+
     // uncomment below to profile a single size
     // int size_len = 1;
     // int SIZE[size_len];
@@ -47,7 +50,7 @@ int main(int argc, char **argv) {
     max_size = SIZE[size_len - 1];
     printf("max_size=%d\n", max_size);
 
-    float alpha = 1.0, beta = 0.; //two arbitary input parameters，C=α*AB+β*C
+    float alpha = 0.5, beta = 1.0; //two arbitary input parameters，C=α*AB+β*C
 
     float *A = NULL, *B = NULL, *C = NULL, *C_ref = NULL;     //host matrices
     float *dA = NULL, *dB = NULL, *dC = NULL, *dC_ref = NULL; //device matrices
@@ -76,24 +79,23 @@ int main(int argc, char **argv) {
     for (int i = 0; i < size_len; i++) {
         m = n = k = SIZE[i];
 
-        printf("m=n=k=%d\n", m);
+        printf("m=%d, n=%d, k=%d\n", m, n, k);
         // 验证计算正确性，同时在核函数计时前预先执行一次，避免冷启动误差
         if (kernel_num != 0) {
             test_kernel(0, m, n, k, alpha, dA, dB, beta, dC_ref, handle);      // cuBLAS
             test_kernel(kernel_num, m, n, k, alpha, dA, dB, beta, dC, handle); // user define
+            cudaCheck(cudaDeviceSynchronize());
             cudaCheck(cudaGetLastError());
-            cudaDeviceSynchronize();
             cudaMemcpy(C, dC, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
             cudaMemcpy(C_ref, dC_ref, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
-            cudaDeviceSynchronize();
 
             if (!verify_matrix(C_ref, C, m * n)) {
                 printf("Failed to pass the correctness verification against NVIDIA cuBLAS. Exited.\n");
                 exit(EXIT_FAILURE);
             }
         }
-        cudaDeviceSynchronize();
 
+        // kernel of choice
         cudaEventRecord(beg);
         for (int j = 0; j < repeat_times; j++) {
             test_kernel(kernel_num, m, n, k, alpha, dA, dB, beta, dC, handle);
@@ -104,10 +106,16 @@ int main(int argc, char **argv) {
         cudaEventElapsedTime(&elapsed_time, beg, end);
         elapsed_time /= 1000.; //换算成秒
 
+        double flops = 2. * m * n * k;
+        // printf("%lld\n", flops);
         printf("Average elasped time: (%f) second, performance: (%f) GFLOPS. size: (%d).\n",
-               elapsed_time / repeat_times, 2. * 1e-9 * repeat_times * m * n * k / elapsed_time, m);
+               elapsed_time / repeat_times, ((double)flops * 1e-9 * repeat_times )/ elapsed_time, m);
         fflush(stdout);
-        copy_matrix(C_ref, C, m * n); //sync C with cuBLAS to prepare for the next run
+        cudaCheck(cudaMemcpy(dC, dC_ref, sizeof(float) * m * n,
+                         cudaMemcpyDeviceToDevice));
+
+
+
     }
 
     // 释放CPU和GPU空间
@@ -119,6 +127,7 @@ int main(int argc, char **argv) {
     cudaFree(dB);
     cudaFree(dC);
     cudaFree(dC_ref);
+    cublasDestroy(handle);
 
     return 0;
 };

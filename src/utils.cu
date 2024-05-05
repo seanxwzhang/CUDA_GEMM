@@ -197,16 +197,25 @@ void test_mysgemm_v10(int M, int N, int K, float alpha, float *A, float *B, floa
     constexpr int TN = 4; // we want this to be 4 to avoid bank conflict naturally 
     constexpr int warps_per_block = BM / WM * BN / WN;
     constexpr int NUM_THREADS = warps_per_block * WARP_SIZE;
+    constexpr int loads_per_iter = 4 * BM / WM * BN / WN * WARP_SIZE;
+    constexpr int lda_m_stride = loads_per_iter / BK;
+    constexpr int ldb_k_stride = loads_per_iter / BN;
+
 
     // we are distributing threads in row-major order
     constexpr int WM_SUBTILE = 32; // the size of an interation/subtile in the M dimension, 4 threads * 4 floats/per thread
     constexpr int WN_SUBTILE = WARP_SIZE * TN * TM / WM_SUBTILE; // the size of an interation/subtile in the N dimension, 8 threads * 4 floats/per thread
+    constexpr int m_subtiles = WM / WM_SUBTILE; // number of subtiles in the M dimension
+    constexpr int n_subtiles = WN / WN_SUBTILE; // number of subtiles in the N dimension
 
     static_assert(WARP_SIZE == WN_SUBTILE / TN * WM_SUBTILE / TM);
+    static_assert(loads_per_iter % BK == 0, "BK must be divisible by loads_per_iter");
+    static_assert(loads_per_iter % BN == 0, "BN must be divisible by loads_per_iter");
 
-    dim3 gridDim(CEIL_DIV(M, BM), CEIL_DIV(N, BN));
+
+    dim3 gridDim(CEIL_DIV(M, BN), CEIL_DIV(N, BM));
     dim3 blockDim(WARP_SIZE * warps_per_block); // 1D CTA
-    mysgemm_v10<BM, BN, BK, WM, WN, TM, TN, WM_SUBTILE, WN_SUBTILE, NUM_THREADS><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+    mysgemm_v10<BM, BN, BK, WM, WN, TM, TN, WM_SUBTILE, WN_SUBTILE, NUM_THREADS, lda_m_stride, ldb_k_stride, m_subtiles, n_subtiles><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
 }
 
 
@@ -308,7 +317,7 @@ void test_kernel(int kernel_num, int M, int N, int K, float alpha, float *A, flo
         case 10:
             test_mysgemm_v10(M, N, K, alpha, A, B, beta, C);
             break;
-        case 11:
+        case 99:
             runSgemmWarptiling(M, N, K, alpha, A, B, beta, C);
             break;
         case 100:
