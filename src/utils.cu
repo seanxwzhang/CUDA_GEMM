@@ -219,6 +219,45 @@ void test_mysgemm_v10(int M, int N, int K, float alpha, float *A, float *B, floa
 }
 
 
+void test_mysgemm_v11(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
+// This kernel implments split-K algorithm to further increase the utilization of SMs
+    constexpr int BM = 128;
+    constexpr int BN = 128;
+    constexpr int BK = 4;
+    constexpr int SPLIT = 16;
+    constexpr int WM = 64;
+    constexpr int WN = 64;
+    constexpr int TM = 8;
+    constexpr int TN = 4; 
+
+    constexpr int warps_per_block = BM / WM * BN / WN;
+    constexpr int NUM_THREADS = warps_per_block * WARP_SIZE;
+    constexpr int loads_per_iter = 4 * BM / WM * BN / WN * WARP_SIZE;
+    constexpr int lda_m_stride = loads_per_iter / BK;
+    constexpr int ldb_k_stride = loads_per_iter / BN;
+
+    constexpr int WM_SUBTILE = 32;
+    constexpr int WN_SUBTILE = WARP_SIZE * TN * TM / WM_SUBTILE; 
+    constexpr int m_subtiles = WM / WM_SUBTILE;
+    constexpr int n_subtiles = WN / WN_SUBTILE;
+
+    assert(K % BK == 0);
+    static_assert(WARP_SIZE == WN_SUBTILE / TN * WM_SUBTILE / TM);
+    static_assert(loads_per_iter % BK == 0, "BK must be divisible by loads_per_iter");
+    static_assert(loads_per_iter % BN == 0, "BN must be divisible by loads_per_iter");
+
+    // create temporary C
+    float *tC = nullptr;
+    // cudaCheck(cudaMalloc((void **)tC, sizeof(float) * M * N * SPLIT));
+
+    dim3 gridDim(CEIL_DIV(M, BN), CEIL_DIV(N, BM), SPLIT);
+    dim3 blockDim(WARP_SIZE * warps_per_block); // 1D CTA
+    mysgemm_v11<BM, BN, BK, SPLIT, WM, WN, TM, TN, WM_SUBTILE, WN_SUBTILE, NUM_THREADS, lda_m_stride, ldb_k_stride, m_subtiles, n_subtiles><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, tC);
+
+
+}
+
+
 void runSgemmWarptiling(int M, int N, int K, float alpha, float *A, float *B,
                         float beta, float *C) {
   // Settings for A100
