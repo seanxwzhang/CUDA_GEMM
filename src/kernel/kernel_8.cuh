@@ -35,6 +35,7 @@ __device__ __forceinline__ void gmem_to_smem(float *sA, float *sB, float smem_a[
     }
 }
 
+
 __device__ __forceinline__ void gmem_to_reg(float *sA, float *sB, float ldreg_a[][4], float ldreg_b[][4], int a_smem_rounds, int a_stride, int b_smem_rounds, int b_stride)
 {
 #pragma unroll // A: global -> reg buffer
@@ -88,8 +89,9 @@ template <const int BM,
           const int BN,
           const int BK,
           const int TM,
-          const int TN>
-__global__ void mysgemm_v8(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C)
+          const int TN,
+          const int NUM_THREADS>
+__global__ void __launch_bounds__(NUM_THREADS, 2) mysgemm_v8(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C)
 {
     int bx = blockIdx.x;
     int by = blockIdx.y;

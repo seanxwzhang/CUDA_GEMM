@@ -94,8 +94,9 @@ template <const int BM,
           const int BN,
           const int BK,
           const int TM,
-          const int TN>
-__global__ void mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C)
+          const int TN,
+          const int THREAD_NUMS>
+__global__ void __launch_bounds__(THREAD_NUMS, 2) mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C)
 {
     int bx = blockIdx.x;
     int by = blockIdx.y;

@@ -177,14 +177,14 @@ void test_mysgemm_v7(int M, int N, int K, float alpha, float *A, float *B, float
 void test_mysgemm_v8(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
     dim3 gridDim(CEIL_DIV(M, 128), CEIL_DIV(N, 128));
     dim3 blockDim(16, 16); // 2D CTA
-    mysgemm_v8<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+    mysgemm_v8<128, 128, 8, 8, 8, 256><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
 }
 
 // autotune
 void test_mysgemm_v9(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
     dim3 gridDim(CEIL_DIV(M, 128), CEIL_DIV(N, 128));
     dim3 blockDim(16, 16); // 2D CTA, 2 warps per block
-    mysgemm_v9<128, 128, 8, 8, 8><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+    mysgemm_v9<128, 128, 8, 8, 8, 256><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
 }
 
 void test_mysgemm_v10(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C) {
@@ -245,16 +245,42 @@ void test_mysgemm_v11(int M, int N, int K, float alpha, float *A, float *B, floa
     static_assert(WARP_SIZE == WN_SUBTILE / TN * WM_SUBTILE / TM);
     static_assert(loads_per_iter % BK == 0, "BK must be divisible by loads_per_iter");
     static_assert(loads_per_iter % BN == 0, "BN must be divisible by loads_per_iter");
+    
 
     // create temporary C
     float *tC = nullptr;
-    // cudaCheck(cudaMalloc((void **)tC, sizeof(float) * M * N * SPLIT));
+    cudaCheck(cudaMalloc((void **)&tC, sizeof(float) * M * N * SPLIT), __FILE__, __LINE__);
 
     dim3 gridDim(CEIL_DIV(M, BN), CEIL_DIV(N, BM), SPLIT);
     dim3 blockDim(WARP_SIZE * warps_per_block); // 1D CTA
-    mysgemm_v11<BM, BN, BK, SPLIT, WM, WN, TM, TN, WM_SUBTILE, WN_SUBTILE, NUM_THREADS, lda_m_stride, ldb_k_stride, m_subtiles, n_subtiles><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, tC);
+    mysgemm_v11<BM, BN, BK, SPLIT, WM, WN, TM, TN, WM_SUBTILE, WN_SUBTILE, NUM_THREADS, lda_m_stride, ldb_k_stride, m_subtiles, n_subtiles><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, tC, C);
 
+    constexpr int blockSize = 1024; // number of threads in the CTA
+    constexpr int gridSize = 1024;
+    constexpr int smem_elements = 128; // how many 
+    const int iterations = M * N / gridSize / smem_elements; // number of "big" iterations every block needs to handle
+    constexpr int stages = 2;
 
+    assert((M * N) % gridSize == 0);
+    assert((M * N / gridSize) % smem_elements == 0); // don't want to handle this edge case
+    assert(stages < iterations); // it doesn't make sense to have more stages than iterations
+    // I adopt the following reduction scheme:
+    // for block in grid:
+    //      for i in iterations:
+    //          1. fetch smem_elements*SPLIT elements from from gmem->smem, using producer and consumer pipelines
+    //          2. carry out reduction:
+    //              2.1 break each block into groups of SPLIT/2 (for reduction)
+    //              2.2 each group carries out the paralle reduction with step complexity of log(SPLIT)
+    //              2.3 the first thread in each group stores the result back to smem
+    //              2.4 kick off an async smem->gmem copy, don't wait for it
+    //          3. wait for next phase of smem to be ready 
+
+    dim3 reduceGrid(gridSize);
+    dim3 reduceBlock(blockSize);
+    constexpr int smem_size = smem_elements * SPLIT * sizeof(float) * stages;
+    constexpr int group_num = blockSize / SPLIT;
+    constexpr int reduction_iters = smem_elements / group_num; // reduction iterations per smem_elements
+    reduce_k<SPLIT, smem_elements, stages, reduction_iters><<<reduceGrid, reduceBlock, smem_size>>>(M, N, K, tC, C, iterations);
 }
 
 
@@ -355,6 +381,9 @@ void test_kernel(int kernel_num, int M, int N, int K, float alpha, float *A, flo
             break;
         case 10:
             test_mysgemm_v10(M, N, K, alpha, A, B, beta, C);
+            break;
+        case 11:
+            test_mysgemm_v11(M, N, K, alpha, A, B, beta, C);
             break;
         case 99:
             runSgemmWarptiling(M, N, K, alpha, A, B, beta, C);

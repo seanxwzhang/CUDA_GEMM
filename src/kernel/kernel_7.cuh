@@ -70,6 +70,7 @@ __global__ void mysgemm_v7(int M, int N, int K, float alpha, float *A, float *B,
         As[0][OFFSET(a_tile_col + 2, i + a_tile_row, BM)] = ldg_a_reg[ldg_index + 2];
         As[0][OFFSET(a_tile_col + 3, i + a_tile_row, BM)] = ldg_a_reg[ldg_index + 3];
     }
+
 #pragma unroll
     for (int i = 0; i < BK; i += b_tile_stride) {
         FETCH_FLOAT4(Bs[0][OFFSET(b_tile_row + i, b_tile_col, BN)]) =
