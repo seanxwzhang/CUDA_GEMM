@@ -68,7 +68,7 @@ namespace kernel10 {
                 // for (uint n = 0; n < TN; n+=4) {
                 //     FETCH_FLOAT4(frag_b[i * TN + n]) = FETCH_FLOAT4_CONST(smem_b[k * BN + i * WN_SUBTILE + n]);
                 // }
-                #pragma unroll
+                // #pragma unroll
                 for (uint n = 0; n < TN; n+=1) {
                     frag_b[i * TN + n] = smem_b[k * BN + i * WN_SUBTILE + n];
                 }

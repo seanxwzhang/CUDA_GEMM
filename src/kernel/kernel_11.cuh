@@ -212,8 +212,7 @@ __global__ void __launch_bounds__(NUM_THREADS, 2) mysgemm_v11(int M, int N, int 
                 for (uint n = 0; n < TN; n += 4) {
                     const int acc_offset = (i * TM + m) * n_subtiles * TN + j * TN + n;
                     if (blockIdx.z == 0) { // only the first block in that split should accumulate from original C matrix
-                        float4 tmp = FETCH_FLOAT4(
-                        C_subtile[m * N + n]);
+                        float4 tmp = FETCH_FLOAT4(C_subtile[m * N + n]);
                         tmp.x = alpha * acc[acc_offset] + beta * tmp.x;
                         tmp.y = alpha * acc[acc_offset + 1] + beta * tmp.y;
                         tmp.z = alpha * acc[acc_offset + 2] + beta * tmp.z;
@@ -240,18 +239,18 @@ template <int SPLIT,
           int smem_elements,
           int stages,
           int reduction_iters>
-__global__ void reduce_k(const int M, const int N, const int K, float* __restrict__ tC, float* __restrict__ C, const int block_iters) {
+__global__ void reduce_k(const int M, const int N, float* __restrict__ tC, float* __restrict__ C, const int block_iters) {
     auto grid = cg::this_grid();
     auto block = cg::this_thread_block(); // data is loaded using block as a group
     auto tile = cg::tiled_partition<SPLIT>(block); // data is reduced using tile as a group
 
     extern __shared__ float smem[];
     uint smem_stage_offsets[stages];
+    float sum[reduction_iters] = {0.0f};
     for (int s = 0; s < stages; ++s) smem_stage_offsets[s] = s * smem_elements * SPLIT;
 
     uint gmem_init_offset = blockIdx.x * smem_elements * SPLIT;
     uint gmem_stride = gridDim.x * smem_elements * SPLIT;
-    uint smem_offset = tile.meta_group_rank() * SPLIT + tile.thread_rank();
     uint smem_stride = tile.meta_group_size() * SPLIT;
 
     __shared__ cuda::pipeline_shared_state<
@@ -272,15 +271,18 @@ __global__ void reduce_k(const int M, const int N, const int K, float* __restric
             pipeline.producer_commit();
         }
         pipeline.consumer_wait();
-        float element[reduction_iters] = {0.0f};
+        uint shared_idx = reduce_iter % stages;
+        uint smem_offset =  tile.meta_group_rank() * SPLIT + tile.thread_rank();
         for (; smem_offset < smem_elements * SPLIT; smem_offset += smem_stride) {
             uint element_idx = smem_offset / smem_stride;
-            element[element_idx] = smem[smem_offset];
-            element[element_idx] = cg::reduce(tile, element[element_idx], cg::plus<float>());
+            sum[element_idx] = smem[smem_stage_offsets[shared_idx] + smem_offset];
+            sum[element_idx] = cg::reduce(tile, sum[element_idx], cg::plus<float>());
             if (tile.thread_rank() == 0) {
-                C[blockIdx.x * smem_elements + smem_offset / SPLIT] = element[element_idx]; // copy to global memory
+                uint output_offset = blockIdx.x * smem_elements + gridDim.x * smem_elements * reduce_iter + smem_offset / SPLIT;
+                C[output_offset] = sum[element_idx]; // copy to global memory
             }
         }
+        // __syncthreads();
         pipeline.consumer_release();
     }
 }
