@@ -48,32 +48,24 @@ __global__ void mysgemm_v5(int M, int N, int K, float alpha, float *A, float *B,
     float a_frag[TM] = {0.};
     float b_frag[TN] = {0.};
 
-    #pragma unroll
     for (int k = 0; k < K; k += BK) {
-        #pragma unroll
         for (int i = 0; i < BM; i += a_tile_stride) {
             As[(a_tile_row + i) * BK + a_tile_col] = A[(a_tile_row + i) * K + a_tile_col];
         }
-        #pragma unroll
         for (int i = 0; i < BK; i += b_tile_stride) {
             Bs[(b_tile_row + i) * BN + b_tile_col] = B[(b_tile_row + i) * N + b_tile_col];
         }
         __syncthreads();
         A += BK;
         B += BK * N;
-        #pragma unroll
         for (int i = 0; i < BK; i++) {
-            #pragma unroll
             for (int j = 0; j < TM; j++) {
                 a_frag[j] = As[(ty + j) * BK + i];
             }
-            #pragma unroll
             for (int l = 0; l < TN; l++) {
                 b_frag[l] = Bs[tx + l + i * BN];
             }
-            #pragma unroll
             for (int j = 0; j < TM; j++) {
-                #pragma unroll
                 for (int l = 0; l < TN; l++)
                     tmp[j][l] += a_frag[j] * b_frag[l];
             }

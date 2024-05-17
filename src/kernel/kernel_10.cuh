@@ -54,20 +54,12 @@ namespace kernel10 {
             // #pragma unroll
             for (uint i = 0; i < m_subtiles; ++i) {
                 // #pragma unroll
-                // for (uint m = 0; m < TM; m+=4) {
-                //     FETCH_FLOAT4(frag_a[i * TM + m]) = FETCH_FLOAT4_CONST(smem_a[k * BM + i * WM_SUBTILE + m]);
-                // }
-                // #pragma unroll
                 for (uint m = 0; m < TM; m+=1) {
                     frag_a[i * TM + m] = smem_a[k * BM + i * WM_SUBTILE + m];
                 }
             }
             // #pragma unroll
             for (uint i = 0; i < n_subtiles; ++i) {
-                // #pragma unroll
-                // for (uint n = 0; n < TN; n+=4) {
-                //     FETCH_FLOAT4(frag_b[i * TN + n]) = FETCH_FLOAT4_CONST(smem_b[k * BN + i * WN_SUBTILE + n]);
-                // }
                 // #pragma unroll
                 for (uint n = 0; n < TN; n+=1) {
                     frag_b[i * TN + n] = smem_b[k * BN + i * WN_SUBTILE + n];

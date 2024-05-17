@@ -255,11 +255,11 @@ void test_mysgemm_v11(int M, int N, int K, float alpha, float *A, float *B, floa
     dim3 blockDim(WARP_SIZE * warps_per_block); // 1D CTA
     mysgemm_v11<BM, BN, BK, SPLIT, WM, WN, TM, TN, WM_SUBTILE, WN_SUBTILE, NUM_THREADS, lda_m_stride, ldb_k_stride, m_subtiles, n_subtiles><<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, tC, C);
 
-    constexpr int blockSize = 64; // number of threads in the CTA
-    constexpr int gridSize = 1024;
-    constexpr int smem_elements = 128; // number of final element a block processes
+    constexpr int blockSize = 128; // number of threads in the CTA
+    constexpr int gridSize = 128;
+    constexpr int smem_elements = 64; // number of final element a block processes
     const int iterations = M * N / gridSize / smem_elements; // number of "big" iterations every block needs to handle
-    constexpr int stages = 8;
+    constexpr int stages = 5;
 
     assert((M * N) % gridSize == 0);
     assert((M * N / gridSize) % smem_elements == 0); // don't want to handle this edge case

@@ -33,18 +33,22 @@ int main(int argc, char **argv) {
     cudaEventCreate(&beg);
     cudaEventCreate(&end);
 
+
     // matrix size
-    int size_len = 16;
-    int SIZE[size_len];
-    for (int i = 0; i < size_len; i++)
-        SIZE[i] = 256 * (i + 1);
+#ifdef BENCHMARK
+        int size_len = 16;
+        int SIZE[size_len];
+        for (int i = 0; i < size_len; i++)
+            SIZE[i] = 256 * (i + 1);
+ #else
+        int size_len = 1;
+        int SIZE[size_len];
+        SIZE[0] = 4096;
+#endif
     // int size_len = 6;
     // int SIZE[6] = {128, 256, 512, 1024, 2048, 4096};
 
     // uncomment below to profile a single size
-    // int size_len = 1;
-    // int SIZE[size_len];
-    // SIZE[0] = 4096;
 
     int m, n, k, max_size;
     max_size = SIZE[size_len - 1];
@@ -75,7 +79,7 @@ int main(int argc, char **argv) {
     cudaCheck(cudaMemcpy(dC, C, sizeof(float) * max_size * max_size, cudaMemcpyHostToDevice));
     cudaCheck(cudaMemcpy(dC_ref, C_ref, sizeof(float) * max_size * max_size, cudaMemcpyHostToDevice));
 
-    int repeat_times = 10;
+    int repeat_times = 2;
     for (int i = 0; i < size_len; i++) {
         m = n = k = SIZE[i];
 
@@ -107,14 +111,11 @@ int main(int argc, char **argv) {
         elapsed_time /= 1000.; //换算成秒
 
         double flops = 2. * m * n * k;
-        // printf("%lld\n", flops);
         printf("Average elasped time: (%f) second, performance: (%f) GFLOPS. size: (%d).\n",
                elapsed_time / repeat_times, ((double)flops * 1e-9 * repeat_times )/ elapsed_time, m);
         fflush(stdout);
         cudaCheck(cudaMemcpy(dC, dC_ref, sizeof(float) * m * n,
                          cudaMemcpyDeviceToDevice));
-
-
 
     }
 

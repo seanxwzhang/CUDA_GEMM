@@ -24,10 +24,6 @@ __device__ __forceinline__ void gmem_to_smem(float *A, float *B, float smem_a[][
     for (int i = 0; i < a_smem_rounds; ++i)
     {
         FETCH_FLOAT4(ldreg_a[i]) = FETCH_FLOAT4(A[i * a_stride]);
-        // int bank_id = a_smem_y;
-        // int bank_row = tid * BK / 128;
-        // int swizzled_a_smem_y = a_smem_y + bank_row * WARP_SIZE * 4 / BK;
-
         smem_a[phase][a_smem_x][a_smem_y + i * a_stride] = ldreg_a[i][0];
         smem_a[phase][a_smem_x + 1][a_smem_y + i * a_stride] = ldreg_a[i][1];
         smem_a[phase][a_smem_x + 2][a_smem_y + i * a_stride] = ldreg_a[i][2];
@@ -76,19 +72,18 @@ __device__ __forceinline__ void reg_to_smem(float smem_a[][BK][BM], float smem_b
 template<int BM, int BN, int BK, int TM, int TN>
 __device__ __forceinline__ void smem_to_frag(float frag_a[][TM], float frag_b[][TN], float smem_a[][BK][BM], float smem_b[][BK][BN], int frag_phase, int smem_phase, int bk)
 {
+    // int swizzel_id = (threadIdx.x / 4) % 2;
 #pragma unroll 
     for (int i = 0; i < TM; i += 4)
     {
-        int tmp = (threadIdx.y * TM + i);
-        tmp = ((tmp / WARP_SIZE) ^ ((tmp % WARP_SIZE) / 4)) % 2 * 4;
-        FETCH_FLOAT4(frag_a[frag_phase][tmp]) = FETCH_FLOAT4(smem_a[smem_phase][bk][threadIdx.y * TM + tmp]);
+        // int swizzel_i = ((i / 4) ^ swizzel_id) * 4;
+        FETCH_FLOAT4(frag_a[frag_phase][i]) = FETCH_FLOAT4(smem_a[smem_phase][bk][threadIdx.y * TM + i]);
     }
 #pragma unroll
     for (int i = 0; i < TN; i += 4)
     {
-        int tmp = (threadIdx.x * TN + i);
-        tmp = ((tmp / WARP_SIZE) ^ ((tmp % WARP_SIZE) / 4)) % 2 * 4;
-        FETCH_FLOAT4(frag_b[frag_phase][tmp]) = FETCH_FLOAT4(smem_b[smem_phase][bk][threadIdx.x * TN + tmp]);
+        // int swizzel_i = ((i / 4) ^ swizzel_id) * 4;
+        FETCH_FLOAT4(frag_b[frag_phase][i]) = FETCH_FLOAT4(smem_b[smem_phase][bk][threadIdx.x * TN + i]);
     }
 }
 
@@ -114,12 +109,12 @@ __global__ void __launch_bounds__(THREAD_NUMS, 2) mysgemm_v9(int M, int N, int K
     int a_stride = threads_per_block / a_threads_per_row_per_round * K;
     constexpr int b_threads_per_row_per_round = BN / 4;
     int b_stride = threads_per_block / b_threads_per_row_per_round * N;
-    int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    // int tid = threadIdx.y * blockDim.x + threadIdx.x;
     // int lane_id = tid % 32;
-    int a_smem_x = (tid % a_threads_per_row_per_round) * 4;
-    int a_smem_y = tid / a_threads_per_row_per_round;
-    int b_smem_x = (tid % b_threads_per_row_per_round) * 4;
-    int b_smem_y = tid / b_threads_per_row_per_round;
+    int a_smem_x = ((threadIdx.y * blockDim.x + threadIdx.x) % a_threads_per_row_per_round) * 4;
+    int a_smem_y = (threadIdx.y * blockDim.x + threadIdx.x) / a_threads_per_row_per_round;
+    int b_smem_x = ((threadIdx.y * blockDim.x + threadIdx.x) % b_threads_per_row_per_round) * 4;
+    int b_smem_y = (threadIdx.y * blockDim.x + threadIdx.x) / b_threads_per_row_per_round;
 
     static_assert((BM * BK) % threads_per_block == 0);
     static_assert((BK * BN) % threads_per_block == 0);

@@ -4,6 +4,17 @@ import matplotlib.pyplot as plt
 from matplotlib.pyplot import MultipleLocator
 import argparse
 
+NAMING_MAPPING = {
+11: "Split-K",
+10: "warp-tiling w/o buffering",
+9:  "prefetching + swizzle",
+8:  "prefetching",
+6:  "vectorized + coalesced",
+4:  "thread-tiling",
+2:  "smem-caching",
+1:  "naive",
+}
+    
 
 def parse_file(file):
     with open(file, 'r') as f:
@@ -25,8 +36,11 @@ def plot(num1, num2, y1, y2, save_dir):
     if num1 == 0:
         num1 = "culas"
 
-    plt.plot(x, y1, c='k', linewidth=2, label=f"kernel_{num1}")
-    plt.plot(x, y2, c='b', linewidth=2, label=f"kernel_{num2}")
+    label1 = NAMING_MAPPING.get(num1, f"kernel_{num1}")
+    label2 = NAMING_MAPPING.get(num2, f"kernel_{num2}")
+    
+    plt.plot(x, y1, c='k', linewidth=2, label=label1)
+    plt.plot(x, y2, c='b', linewidth=2, label=label2)
     plt.legend()
 
     plt.scatter(x, y1, marker="s", s=60, c='k', edgecolors='k', linewidth=2)
@@ -36,13 +50,13 @@ def plot(num1, num2, y1, y2, save_dir):
     plt.xlabel("Matrix size (M=N=K)", fontsize=12, fontweight='bold')
     plt.ylabel("Performance (GFLOPS)", fontsize=12, fontweight='bold')
 
-    plt.title(f"Comparison bewteen: kernel_{num1} and kernel_{num2}", fontsize=16, fontweight='bold')
+    plt.title(f"Comparison bewteen: {label1} and {label2}", fontsize=16, fontweight='bold')
 
     x_major_locator = MultipleLocator(256)
     plt.gca().xaxis.set_major_locator(x_major_locator)
+    plt.xticks(rotation=45)  # Rotate xticks by 45 degrees
 
     plt.savefig(f"{save_dir}/kernel_{num1}_vs_{num2}.png")
-
 
 def main(args):
     root = os.path.dirname(os.path.abspath(__file__))
